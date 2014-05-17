@@ -5,7 +5,7 @@ MIDI does not fit all our needs as a musical event system any more. This comes a
 
 OSC today is mainly used via network sockets (UDP/TCP). For a modern musical event system however there is the need for sample-accurate, low-latency event routing. We already have our beloved [Jack](http://jackaudio.org) Audio Connection Kit for exactly this purpose. Sadly, it officially supports only MIDI as its sole musical event.
 
-**This is a workaround for Jack to support routing sample-accurate OSC messages via Jack MIDI ports as discussed at [LAC2014](http://lac.linuxaudio.org/2014/).**
+**This is a workaround for Jack to support routing sample-accurate OSC packets via Jack MIDI ports as discussed at [LAC2014](http://lac.linuxaudio.org/2014/).**
 
 Get the poster in question [here](http://lac.linuxaudio.org/2014/download/routing_OSC_via_vanilla_JACK.pdf).
 
@@ -34,7 +34,7 @@ Example MIDI NoteOn event (for jack\_nframes\_t=uint32\_t, size\_t=uint64\_t):
 	|           |    3 byte payload     |        |
 
 ## Jack OSC
-The Jack MIDI implementation is indifferent to the buffer data being routed in a given event. We thus exploit this 'feature' to route standard OSC messages instead of raw MIDI bytes. When routing OSC, the raw OSC message is embedded in the buffer instead. For interoperability with existing OSC libraries and [NetJack](http://jackaudio.org/netjack), messages are always encoded in network byte-order.
+The Jack MIDI implementation is indifferent to the buffer data being routed in a given event. We thus exploit this 'feature' to route standard OSC packets instead of raw MIDI bytes. When routing OSC, the raw OSC packet is embedded in the buffer instead. For interoperability with existing OSC libraries and [NetJack](http://jackaudio.org/netjack), packets are always encoded in network byte-order.
 
 Example OSC '/hello ,s world' message (for jack\_nframes\_t=uint32\_t, size\_t=uint64\_t):
 
@@ -45,12 +45,9 @@ Example OSC '/hello ,s world' message (for jack\_nframes\_t=uint32\_t, size\_t=u
 	+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
 	|           |   20 byte payload     | /  h  e  l  l  o        ,  s        w  o  r  l  d         |
 
-It makes not much sense (and calls for a lot of trouble) to route OSC bundles via Jack as the sole purpose of bundles - to associate a timestamp to one or several messages - is futile in the Jack graph as each Jack OSC event has its own sample accurate time stamp already.
-
-**We therefore only inject and handle raw network byte-encoded OSC messages in JACK, OSC bundles are NOT allowed.**
 
 ## Header *jack\_osc.h*
-Instead of all the 'jack\_midi\_\*' types and functions, we propose to use equivalent macros 'jack\_osc\_\*' to make it clear that we actually handle OSC messages via Jack MIDI ports. We provide a ready-to-use *jack\_osc.h* header for developers to include into their projects. It defines the following macros:
+Instead of all the 'jack\_midi\_\*' types and functions, we propose to use equivalent macros 'jack\_osc\_\*' to make it clear that we actually handle OSC packets via Jack MIDI ports. We provide a ready-to-use *jack\_osc.h* header for developers to include into their projects. It defines the following macros:
 
 	#define JACK_DEFAULT_OSC_TYPE           JACK_DEFAULT_MIDI_TYPE
 	#define JACK_EVENT_TYPE__OSC            "OSC"
@@ -69,15 +66,15 @@ Instead of all the 'jack\_midi\_\*' types and functions, we propose to use equiv
 **It is not necessary to use this header since it contains transparent macros referring to the Jack MIDI API, but developers are encouraged to use this header (or at least its definitions) to make their code more clear.**
 
 ## MIDI - OSC clash
-So we are routing OSC messages via Jack MIDI ports, doesn't this interfere with Jack MIDI routing in the first place?
+So we are routing OSC packets via Jack MIDI ports, doesn't this interfere with Jack MIDI routing in the first place?
 
 No, it does not.
 
 The user ideally should only connect event ports of the same type (see next section), e.g. MIDI-MIDI or OSC-OSC. But even if the user makes an inappropriate connection (MIDI-OSC or OSC-MIDI), there is no clash of events:
 
-* OSC messages have a '/' (2f) as their first byte which is no valid MIDI status byte. MIDI clients thus should gracefully ignore OSC messages.
+* OSC messages have a '/' (0x2f) and OSC bundles a '#' (0x23) as their first byte which is no valid MIDI status byte. MIDI clients thus should gracefully ignore OSC packets.
 
-* Jack MIDI data in turn never has a '/' (2f) as its first byte and should thus gracefully be ignored by OSC clients.
+* Jack MIDI data in turn never has a '/' (0x2f) nor a '#' (0x23) as its first byte and should thus gracefully be ignored by OSC clients.
 
 ## Metadata
 To signal the user, Jack clients and patch bays that a given Jack MIDI port is used for OSC routing, we use the Jack [metadata API](http://jackaudio.org/metadata) to set the event type of the port to OSC. _Note: the metadata API currently is only implemented for Jack1, not yet for Jack2_.
@@ -89,7 +86,7 @@ After registering a Jack MIDI port you want to route OSC over, you therefore mus
 	#include <jack/metadata.h>
 
 	jack_uuid_t uuid = jack_port_uuid(port);
-	jack_set_property(client, uid, "http://jackaudio.org/metadata/event-types", "OSC", NULL);
+	jack_set_property(client, uid, "http://jackaudio.org/metadata/event-types", "OSC", "text/plain");
 
 or even better, using definitions in *jackey.h* and *jack\_osc.h* ...
 
@@ -98,7 +95,7 @@ or even better, using definitions in *jackey.h* and *jack\_osc.h* ...
 	#include <jack_osc.h>
 	
 	jack_uuid_t uuid = jack_port_uuid(port);
-	jack_set_property(client, uuid, JACKEY_EVENT_TYPES, JACK_EVENT_TYPE__OSC, NULL);
+	jack_set_property(client, uuid, JACKEY_EVENT_TYPES, JACK_EVENT_TYPE__OSC, "text/plain");
 
 Do not forget to clean up the metadata database before unregistering an OSC port.
 
@@ -108,7 +105,7 @@ or even better using definitions in *jackey.h*...
 
 	jack_remove_property(client, uuid, JACKEY_EVENT_TYPES);
 
-To check whether a given Jack event port supports OSC messages you can do.
+To check whether a given Jack event port supports OSC packets you can do.
 
 	#include <string.h>
 	#include <stdio.h>
@@ -122,7 +119,7 @@ To check whether a given Jack event port supports OSC messages you can do.
 	jack_free(type);
 
 ## Realtime safe OSC libraries
-If you want to parse, create and manipulate OSC messages in the Jack process thread, you'll need a realtime safe OSC library.
+If you want to parse, create and manipulate OSC packets in the Jack process thread, you'll need a realtime safe OSC library.
 
 * [rtosc](https://github.com/fundamental/rtosc)
 
@@ -208,13 +205,13 @@ This is a *minimal\_example.c* for a simple Jack OSC filter. It registers two OS
 		osc_in = jack_port_register(client, "osc.in", JACK_DEFAULT_OSC_TYPE, JackPortIsInput, 0);
 		uuid_in = jack_port_uuid(osc_in);
 		// set port event type to OSC
-		jack_set_property(client, uuid_in, JACKEY_EVENT_TYPES, JACK_EVENT_TYPE__OSC, NULL);
+		jack_set_property(client, uuid_in, JACKEY_EVENT_TYPES, JACK_EVENT_TYPE__OSC, "text/plain");
 	
 		// register output port
 		osc_out = jack_port_register(client, "osc.out", JACK_DEFAULT_OSC_TYPE, JackPortIsOutput, 0);
 		uuid_out = jack_port_uuid(osc_out);
 		// set port event type to OSC
-		jack_set_property(client, uuid_out, JACKEY_EVENT_TYPES, JACK_EVENT_TYPE__OSC, NULL);
+		jack_set_property(client, uuid_out, JACKEY_EVENT_TYPES, JACK_EVENT_TYPE__OSC, "text/plain");
 	
 		jack_activate(client);
 	
