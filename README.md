@@ -130,6 +130,7 @@ If you want to parse, create and manipulate OSC packets in the Jack process thre
 ## Jack clients with support for OSC routing
 
 * [Tjost](https://github.com/OpenMusicKontrollers/Tjost)
+* [ZynAddSubFX](http://zynaddsubfx.sourceforge.net/)
 
 ## Minimal working example
 This is a *minimal\_example.c* for a simple Jack OSC filter. It registers two OSC ports, passes thru all OSC messages with a '\hello' path, stops the program upon an '/exit' message or emits an '/invalid' message otherwise.
